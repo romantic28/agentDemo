@@ -69,3 +69,5 @@ agent/
 - 类型检查: mypy strict mode
 - 提交规范: Conventional Commits
 - 分支策略: Git Flow
+目前对话界面：
+<img width="1855" height="708" alt="微信图片_2026-07-31_235525_436" src="https://github.com/user-attachments/assets/097c8cca-1cf5-4e00-befc-edbacd6ead29" />
