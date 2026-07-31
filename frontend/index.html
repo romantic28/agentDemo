@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Agent - PoC Demo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; height: 100vh; display: flex; flex-direction: column; }
+        .header { background: #1a1a2e; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+        .header h1 { font-size: 18px; font-weight: 500; }
+        .header .badge { background: #4caf50; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+        .chat-container { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+        .message { max-width: 75%; padding: 12px 16px; border-radius: 12px; line-height: 1.6; font-size: 14px; white-space: pre-wrap; }
+        .message.user { align-self: flex-end; background: #1a73e8; color: white; border-bottom-right-radius: 4px; }
+        .message.assistant { align-self: flex-start; background: white; color: #333; border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .message .meta { font-size: 11px; opacity: 0.7; margin-top: 6px; }
+        .input-area { background: white; border-top: 1px solid #e0e0e0; padding: 16px 24px; display: flex; gap: 12px; align-items: center; }
+        .input-area input[type="text"] { flex: 1; padding: 12px 16px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.2s; }
+        .input-area input[type="text"]:focus { border-color: #1a73e8; }
+        .input-area button { padding: 12px 24px; background: #1a73e8; color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; transition: background 0.2s; }
+        .input-area button:hover { background: #1557b0; }
+        .input-area button:disabled { background: #ccc; cursor: not-allowed; }
+        .input-area .upload-btn { background: #f0f0f0; color: #666; padding: 12px; border-radius: 8px; cursor: pointer; border: 1px solid #ddd; }
+        .input-area .upload-btn:hover { background: #e0e0e0; }
+        .typing { display: flex; gap: 4px; padding: 8px 0; }
+        .typing span { width: 8px; height: 8px; background: #999; border-radius: 50%; animation: bounce 1.4s infinite ease-in-out; }
+        .typing span:nth-child(1) { animation-delay: -0.32s; }
+        .typing span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+        .status-bar { background: #fafafa; border-top: 1px solid #eee; padding: 8px 24px; font-size: 12px; color: #666; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 Enterprise Agent System</h1>
+        <span class="badge">PoC Demo</span>
+    </div>
+    <div class="chat-container" id="chatContainer"></div>
+    <div class="input-area">
+        <label class="upload-btn" title="上传文件/图片">
+            📎
+            <input type="file" id="fileInput" style="display:none" accept="image/*,.pdf,.docx,.xlsx,.csv,.txt,.wav,.mp3">
+        </label>
+        <input type="text" id="msgInput" placeholder="输入消息... (支持文本、上传图片/文件/音频)" autofocus>
+        <button id="sendBtn" onclick="sendMessage()">发送</button>
+    </div>
+    <div class="status-bar">
+        <span id="statusText">就绪</span>
+        <span>API: http://localhost:8000</span>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api/v1';
+        let conversationId = null;
+
+        const chatContainer = document.getElementById('chatContainer');
+        const msgInput = document.getElementById('msgInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const fileInput = document.getElementById('fileInput');
+        const statusText = document.getElementById('statusText');
+
+        msgInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+        });
+
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            await uploadFile(file);
+            fileInput.value = '';
+        });
+
+        function addMessage(role, content) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            const time = new Date().toLocaleTimeString();
+            div.innerHTML = `${escapeHtml(content)}<div class="meta">${time}</div>`;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function showTyping() {
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+            div.id = 'typingIndicator';
+            div.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function removeTyping() {
+            const el = document.getElementById('typingIndicator');
+            if (el) el.remove();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function sendMessage() {
+            const content = msgInput.value.trim();
+            if (!content) return;
+
+            addMessage('user', content);
+            msgInput.value = '';
+            sendBtn.disabled = true;
+            statusText.textContent = '处理中...';
+            showTyping();
+
+            try {
+                const res = await fetch(`${API_BASE}/chat/completions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content,
+                        conversation_id: conversationId,
+                        tenant_id: 'demo_tenant',
+                        user_id: 'demo_user',
+                    }),
+                });
+
+                const data = await res.json();
+                conversationId = data.conversation_id;
+                removeTyping();
+                addMessage('assistant', data.message.content);
+                statusText.textContent = `会话: ${conversationId.slice(0, 8)}...`;
+            } catch (err) {
+                removeTyping();
+                addMessage('assistant', `⚠️ 连接错误: ${err.message}\n请确保后端服务已启动 (python -m services.gateway.main)`);
+                statusText.textContent = '连接失败';
+            }
+
+            sendBtn.disabled = false;
+            msgInput.focus();
+        }
+
+        async function uploadFile(file) {
+            addMessage('user', `📎 上传文件: ${file.name} (${(file.size/1024).toFixed(1)}KB)`);
+            statusText.textContent = '上传中...';
+            showTyping();
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('tenant_id', 'demo_tenant');
+                formData.append('user_id', 'demo_user');
+                if (conversationId) formData.append('conversation_id', conversationId);
+
+                const res = await fetch(`${API_BASE}/chat/upload`, { method: 'POST', body: formData });
+                const data = await res.json();
+                conversationId = data.conversation_id;
+                removeTyping();
+                addMessage('assistant', `✅ 文件已接收: ${data.filename}\n类型: ${data.content_type}\n状态: ${data.status}`);
+                statusText.textContent = '就绪';
+            } catch (err) {
+                removeTyping();
+                addMessage('assistant', `⚠️ 上传失败: ${err.message}`);
+                statusText.textContent = '上传失败';
+            }
+        }
+
+        addMessage('assistant', '你好！我是企业级智能体 Agent。\n\n我可以帮你：\n• 📝 处理文本对话和业务查询\n• 🖼️ 理解图片内容\n• 🎤 处理语音输入\n• 📄 解析文档(PDF/Word/Excel)\n• 🔧 调用工具完成任务\n\n请输入你的需求，或上传文件开始体验。');
+    </script>
+</body>
+</html>

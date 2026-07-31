@@ -1,0 +1,74 @@
+groups:
+  - name: agent_system_alerts
+    rules:
+      # 业务告警
+      - alert: HighTaskFailureRate
+        expr: rate(agent_task_total{status="failed"}[5m]) / rate(agent_task_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "任务失败率超过5%"
+          description: "租户 {{ $labels.tenant_id }} 的任务失败率为 {{ $value | humanizePercentage }}"
+
+      - alert: TaskExecutionSlow
+        expr: histogram_quantile(0.95, rate(agent_task_duration_seconds_bucket[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95任务耗时超过10秒"
+
+      # 模型告警
+      - alert: LLMCallFailureRate
+        expr: rate(agent_llm_call_total{status="error"}[5m]) / rate(agent_llm_call_total[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM调用失败率超过10%"
+          description: "Provider {{ $labels.provider }} 模型 {{ $labels.model }} 失败率过高"
+
+      - alert: LLMLatencyHigh
+        expr: histogram_quantile(0.95, rate(agent_llm_call_duration_seconds_bucket[5m])) > 15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM P95延迟超过15秒"
+
+      # 工具调用告警
+      - alert: ToolCallFailureRate
+        expr: rate(agent_tool_call_total{status="error"}[5m]) / rate(agent_tool_call_total[5m]) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "工具 {{ $labels.tool_name }} 失败率超过20%"
+
+      # 安全告警
+      - alert: SecurityEventSpike
+        expr: rate(agent_security_event_total{severity="critical"}[5m]) > 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "检测到大量安全事件"
+          description: "过去5分钟内严重安全事件数量异常"
+
+      - alert: PendingApprovalsHigh
+        expr: agent_approval_pending > 10
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "待审批请求积压"
+
+      # 基础设施告警
+      - alert: MemoryRetrievalSlow
+        expr: histogram_quantile(0.95, rate(agent_memory_retrieval_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "记忆检索P95延迟超过1秒"

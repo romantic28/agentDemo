@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  - job_name: "agent-gateway"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["agent-gateway:8000"]
+        labels:
+          service: "gateway"
+
+  - job_name: "agent-orchestrator"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["agent-orchestrator:8001"]
+        labels:
+          service: "orchestrator"
+
+  - job_name: "milvus"
+    static_configs:
+      - targets: ["milvus:9091"]
+
+  - job_name: "postgres"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis-exporter:9121"]
