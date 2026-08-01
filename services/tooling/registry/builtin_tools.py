@@ -46,7 +46,6 @@ class WebSearchTool(BaseTool):
 
     async def execute(self, parameters: dict) -> dict:
         query = parameters.get("query", "")
-        # PoC阶段返回模拟数据，生产环境对接真实搜索API
         return {
             "query": query,
             "results": [
@@ -74,7 +73,6 @@ class DataQueryTool(BaseTool):
     async def execute(self, parameters: dict) -> dict:
         table = parameters.get("table", "")
         conditions = parameters.get("conditions", {})
-        # PoC阶段返回模拟数据
         return {
             "table": table,
             "conditions": conditions,
@@ -121,3 +119,14 @@ def get_default_tools() -> list[BaseTool]:
         DataQueryTool(),
         DateTimeTool(),
     ]
+
+
+def register_builtin_tools(registry) -> None:
+    """将内置工具和领域工具注册到 ToolRegistry"""
+    for tool in get_default_tools():
+        registry.register(tool)
+
+    from services.domain.office_tools import get_domain_tools
+
+    for tool in get_domain_tools():
+        registry.register(tool)

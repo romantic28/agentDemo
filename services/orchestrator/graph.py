@@ -15,10 +15,11 @@ logger = get_logger(__name__)
 class AgentGraph:
     """核心 Agent 工作流图"""
 
-    def __init__(self, llm_router: LLMRouter, tool_registry=None):
+    def __init__(self, llm_router: LLMRouter, tool_registry=None, memory_manager=None):
         self._llm = llm_router
         self._planner = TaskPlanner(llm_router)
         self._tool_registry = tool_registry
+        self._memory_manager = memory_manager
         self._graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
@@ -54,13 +55,38 @@ class AgentGraph:
         return workflow.compile()
 
     async def _plan_node(self, state: AgentState) -> AgentState:
-        """规划节点 - 生成任务执行计划"""
+        """规划节点 - 生成任务执行计划，并检索相关记忆"""
+        # 检索记忆上下文注入规划
+        if self._memory_manager:
+            try:
+                memory_context = await self._memory_manager.retrieve_context(
+                    tenant_id=state["tenant_id"],
+                    user_id=state["user_id"],
+                    conversation_id=state["conversation_id"],
+                    query=state["user_goal"],
+                )
+                if memory_context.get("short_term_memory") or memory_context.get("long_term_memory"):
+                    memory_summary = self._format_memory_context(memory_context)
+                    state["user_goal"] = f"{state['user_goal']}\n\n[相关记忆上下文]\n{memory_summary}"
+                    logger.debug("Memory context injected", conversation_id=state["conversation_id"])
+            except Exception as e:
+                logger.warning("Memory retrieval failed, continuing without context", error=str(e))
+
         available_tools = []
         if self._tool_registry:
             available_tools = self._tool_registry.list_tools_schema()
 
         state = await self._planner.plan(state, available_tools)
         return state
+
+    def _format_memory_context(self, memory_context: dict) -> str:
+        """将记忆检索结果格式化为文本"""
+        parts = []
+        for mem in memory_context.get("short_term_memory", [])[:3]:
+            parts.append(f"- [近期] {mem.get('content', '')[:200]}")
+        for mem in memory_context.get("long_term_memory", [])[:3]:
+            parts.append(f"- [长期] {mem.get('content', '')[:200]}")
+        return "\n".join(parts) if parts else ""
 
     def _should_confirm(self, state: AgentState) -> Literal["confirm", "execute", "respond"]:
         """判断是否需要人工确认"""
@@ -77,7 +103,6 @@ class AgentGraph:
     async def _check_confirmation_node(self, state: AgentState) -> AgentState:
         """等待人工确认节点（当前版本自动通过，后续接入审批流）"""
         logger.info("Task requires confirmation", conversation_id=state["conversation_id"])
-        # PoC阶段：自动通过，生产环境会接入审批流
         state["requires_confirmation"] = False
         return state
 
@@ -94,7 +119,6 @@ class AgentGraph:
         if action == "respond":
             return state
 
-        # 执行工具调用
         if self._tool_registry and action != "respond":
             tool_params = action_data.get("action_input", {})
             if isinstance(tool_params, str):
@@ -139,11 +163,11 @@ class AgentGraph:
         return "continue"
 
     async def _respond_node(self, state: AgentState) -> AgentState:
-        """响应节点 - 生成最终用户回复"""
+        """响应节点 - 生成最终用户回复，并存储记忆"""
         if state.get("final_response"):
+            await self._store_memory(state)
             return state
 
-        # 基于工具结果生成回复
         messages = [
             {
                 "role": "system",
@@ -164,7 +188,38 @@ class AgentGraph:
         )
 
         state["final_response"] = response["content"]
+        await self._store_memory(state)
         return state
+
+    async def _store_memory(self, state: AgentState) -> None:
+        """将本轮对话存储到记忆系统"""
+        if not self._memory_manager:
+            return
+
+        try:
+            from shared.schemas.memory import MemoryEntry, MemoryType
+
+            content = f"用户: {state['user_goal']}\n助手: {state.get('final_response', '')}"
+            entry = MemoryEntry(
+                tenant_id=state["tenant_id"],
+                user_id=state["user_id"],
+                memory_type=MemoryType.SHORT_TERM,
+                content=content[:2000],
+                metadata={
+                    "conversation_id": state["conversation_id"],
+                    "has_tool_calls": len(state.get("tool_results", [])) > 0,
+                },
+                importance_score=0.5,
+            )
+
+            # Store in working memory immediately
+            self._memory_manager.add_working_memory(state["conversation_id"], entry)
+
+            # Persist to short-term vector store
+            await self._memory_manager.store_short_term(entry)
+            logger.debug("Memory stored for conversation", conversation_id=state["conversation_id"])
+        except Exception as e:
+            logger.warning("Memory storage failed", error=str(e))
 
     async def run(self, state: AgentState) -> AgentState:
         """运行完整的 Agent 工作流"""

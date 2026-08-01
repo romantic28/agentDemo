@@ -1,18 +1,24 @@
 """API网关服务 - 系统统一流量入口"""
 
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from shared.config import get_settings
 from shared.utils import setup_logging, get_logger
 from services.gateway.routes import router as api_router
-from services.gateway.middleware import TenantMiddleware, RateLimitMiddleware
+from services.gateway.middleware import TenantMiddleware, RateLimitMiddleware, TraceMiddleware, register_error_handlers
 from services.gateway.tracing import setup_tracing
 from services.auth.routes import router as auth_router
 
 logger = get_logger(__name__)
+
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -42,8 +48,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(TraceMiddleware)
     app.add_middleware(TenantMiddleware)
     app.add_middleware(RateLimitMiddleware, max_requests=200, window_seconds=60)
+
+    # Structured error handlers
+    register_error_handlers(app)
 
     # Tracing
     setup_tracing(app)
@@ -55,6 +65,18 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check():
         return {"status": "healthy", "service": "gateway", "env": settings.app_env}
+
+    # Static file serving for the React frontend SPA
+    if FRONTEND_DIST.exists():
+        app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="static-assets")
+
+        @app.get("/{full_path:path}")
+        async def serve_spa(request: Request, full_path: str):
+            """SPA fallback: serve index.html for all non-API routes"""
+            file_path = FRONTEND_DIST / full_path
+            if file_path.is_file():
+                return FileResponse(file_path)
+            return FileResponse(FRONTEND_DIST / "index.html")
 
     return app
 

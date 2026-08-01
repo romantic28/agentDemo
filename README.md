@@ -25,7 +25,9 @@
 ```bash
 # 1. 启动基础设施
 docker compose up -d
-
+cd C:\Users\GMH\Desktop\agent
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 # 2. 安装 Python 依赖
 pip install -e ".[dev,multimodal]"
 
@@ -36,7 +38,7 @@ cp .env.example .env
 alembic upgrade head
 
 # 5. 启动开发服务
-python -m uvicorn services.gateway.main:app --reload --port 8000
+python -m uvicorn services.gateway:app --reload --port 8000
 ```
 
 ### 运行测试
